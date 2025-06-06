@@ -1,4 +1,3 @@
- Requirements for Streamlit Live Transcription
 # Core Whisper dependencies
 numba
 numpy
