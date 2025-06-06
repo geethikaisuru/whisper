@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  whisper-transcription:
+    build: .
+    container_name: whisper-live-transcription
+    ports:
+      - "8501:8501"
+    volumes:
+      # Mount audio devices (Linux/Mac)
+      - /dev/snd:/dev/snd:ro
+    devices:
+      # Audio device access
+      - /dev/snd
+    environment:
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    restart: unless-stopped
+    networks:
+      - whisper-network
+    
+  # Optional: NVIDIA GPU support version
+  whisper-transcription-gpu:
+    build: .
+    container_name: whisper-live-transcription-gpu
+    ports:
+      - "8502:8501"
+    volumes:
+      - /dev/snd:/dev/snd:ro
+    devices:
+      - /dev/snd
+    environment:
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks:
+      - whisper-network
+    profiles:
+      - gpu
+
+networks:
+  whisper-network:
+    driver: bridge
+
+# Usage:
+# Standard version:    docker-compose up whisper-transcription
+# GPU version:         docker-compose --profile gpu up whisper-transcription-gpu
+# Both versions:       docker-compose --profile gpu up 
