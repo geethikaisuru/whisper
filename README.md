@@ -5,7 +5,7 @@
 [![Streamlit](https://img.shields.io/badge/streamlit-1.28+-red.svg)](https://streamlit.io/)
 [![OpenAI Whisper](https://img.shields.io/badge/whisper-latest-orange.svg)](https://github.com/openai/whisper)
 
-[![OpenAI Whisper](demo.jpg)]
+![OpenAI Whisper](demo.jpg)
 
 Real-time speech transcription using OpenAI Whisper with both command-line and web interfaces. Features GPU acceleration, multiple model options, and an intuitive Streamlit web UI.
 
@@ -225,16 +225,6 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 | CPU i7 | small | CPU | ~2.5s/2s audio | 92%+ |
 | CPU i5 | base | CPU | ~1.8s/2s audio | 88%+ |
 
-## 🚀 Roadmap
-
-- [ ] PyPI package release
-- [ ] Multi-language support UI
-- [ ] Real-time translation
-- [ ] Voice activity detection
-- [ ] Audio recording/export
-- [ ] API endpoints
-- [ ] Mobile app support
-- [ ] Team collaboration features
 
 ## 🐛 Troubleshooting
 
