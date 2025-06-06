@@ -5,6 +5,8 @@
 [![Streamlit](https://img.shields.io/badge/streamlit-1.28+-red.svg)](https://streamlit.io/)
 [![OpenAI Whisper](https://img.shields.io/badge/whisper-latest-orange.svg)](https://github.com/openai/whisper)
 
+[![OpenAI Whisper](demo.jpg)]
+
 Real-time speech transcription using OpenAI Whisper with both command-line and web interfaces. Features GPU acceleration, multiple model options, and an intuitive Streamlit web UI.
 
 ## ✨ Features
