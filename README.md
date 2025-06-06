@@ -266,6 +266,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - OpenAI for the incredible Whisper model
 - Streamlit team for the amazing framework
 - The open-source community for inspiration and support
+- ⚠️ **Note:** The underlying Whisper Model is made by OpenAI and is open source with MIT License. I only made the frontend to easily use that model.
+- [OpenAI Whisper](https://github.com/openai/whisper) 
 
 ## ⭐ Star History
 
@@ -273,8 +275,3 @@ If this project helped you, please consider giving it a star! ⭐
 
 [![Star History Chart](https://api.star-history.com/svg?repos=geethikaisuru/whisper-live-transcription&type=Date)](https://star-history.com/#geethikaisuru/whisper-live-transcription&Date)
 
----
-
-<div align="center">
-Made with ❤️ by <a href="https://geethikaisuru.com">Geethika Isuru</a>
-</div>
