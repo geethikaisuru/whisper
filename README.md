@@ -4,19 +4,26 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Streamlit](https://img.shields.io/badge/streamlit-1.28+-red.svg)](https://streamlit.io/)
 [![OpenAI Whisper](https://img.shields.io/badge/whisper-latest-orange.svg)](https://github.com/openai/whisper)
+[![Faster-Whisper](https://img.shields.io/badge/faster--whisper-latest-brightgreen.svg)](https://github.com/SYSTRAN/faster-whisper)
 --
 ![cover Image](cover.jpg)
 --
 ![OpenAI Whisper](demo.jpg)
 
-Real-time speech transcription using OpenAI Whisper with both command-line and web interfaces. Features GPU acceleration, multiple model options, and an intuitive Streamlit web UI.
+Real-time speech transcription using **OpenAI Whisper** and **Faster-Whisper** with both command-line and web interfaces. Features GPU acceleration, multiple model options, up to 4x faster processing, and an intuitive Streamlit web UI.
 
 ## ✨ Features
 
-- 🎯 **Real-time transcription** with OpenAI Whisper models
-- 🚀 **GPU acceleration** support (CUDA) for faster processing
+### 🚀 Dual Whisper Implementation Support
+- **⚡ Faster-Whisper (Recommended)**: Up to 4x faster with CTranslate2 optimization
+- **🤖 OpenAI Whisper**: Original implementation for full compatibility
+
+### 🎯 Core Features
+- 🎯 **Real-time transcription** with both Whisper implementations
+- 🚀 **GPU acceleration** support (CUDA) with FP16 and INT8 quantization
 - 🌐 **Web interface** (Streamlit) and command-line interface
-- 🎛️ **Multiple Whisper models** (tiny, base, small, medium, large, turbo)
+- 🎛️ **Multiple Whisper models** including distil-large-v3 and large-v3
+- 🔊 **Voice Activity Detection (VAD)** - Automatic silence filtering
 - 🎤 **Audio device selection** with automatic detection
 - ⌨️ **Keyboard shortcuts** (SHIFT + SPACE to toggle)
 - 📊 **Live status updates** and transcription history
@@ -37,8 +44,11 @@ curl -sSL https://raw.githubusercontent.com/geethikaisuru/whisper-live-transcrip
 git clone https://github.com/geethikaisuru/whisper-live-transcription.git
 cd whisper-live-transcription
 
-# Install dependencies
+# Install dependencies (includes both Whisper implementations)
 pip install -r requirements_streamlit.txt
+
+# Test Faster-Whisper installation (optional)
+python install_faster_whisper.py
 
 # Run the Streamlit app
 python run_streamlit.py

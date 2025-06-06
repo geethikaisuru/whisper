@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-Streamlit Live Transcription with OpenAI Whisper
+Streamlit Live Transcription with OpenAI Whisper and Faster-Whisper
 Real-time speech recognition from microphone input using GPU acceleration.
 Web-based interface with start/stop controls and keyboard shortcuts.
 Optimized for NVIDIA RTX 4050 with 6GB VRAM.
+
+Features:
+- Support for both OpenAI Whisper and Faster-Whisper (CTranslate2)
+- GPU acceleration with FP16 and INT8 quantization
+- Real-time transcription with configurable chunk processing
+- VAD (Voice Activity Detection) filtering
+- Keyboard shortcuts and web interface controls
 
 Controls:
 - Start/Stop Button: Toggle listening
@@ -19,7 +26,6 @@ License: MIT License
 """
 
 import streamlit as st
-import whisper
 import pyaudio
 import numpy as np
 import torch
@@ -29,6 +35,20 @@ import queue
 import os
 from collections import deque
 import streamlit.components.v1 as components
+import logging
+
+# Import both whisper implementations
+try:
+    import whisper as openai_whisper
+    OPENAI_WHISPER_AVAILABLE = True
+except ImportError:
+    OPENAI_WHISPER_AVAILABLE = False
+
+try:
+    from faster_whisper import WhisperModel
+    FASTER_WHISPER_AVAILABLE = True
+except ImportError:
+    FASTER_WHISPER_AVAILABLE = False
 
 # Configure Streamlit page
 st.set_page_config(
@@ -39,19 +59,27 @@ st.set_page_config(
 )
 
 class StreamlitLiveTranscriber:
-    def __init__(self, model_name="small", chunk_duration=2.0, overlap_duration=0.5, device=None):
+    def __init__(self, model_name="small", chunk_duration=2.0, overlap_duration=0.5, 
+                 device=None, whisper_implementation="faster-whisper", compute_type="float16", 
+                 use_vad=True):
         """
         Initialize the live transcriber for Streamlit.
         
         Args:
-            model_name (str): Whisper model to use ("tiny", "base", "small", "medium", "large", "turbo")
+            model_name (str): Whisper model to use ("tiny", "base", "small", "medium", "large", "turbo", "distil-large-v3")
             chunk_duration (float): Duration of each audio chunk in seconds
             overlap_duration (float): Overlap between chunks to avoid cutting words
             device (str): Device to use ("cuda", "cpu", or None for auto-detection)
+            whisper_implementation (str): "openai-whisper" or "faster-whisper"
+            compute_type (str): For faster-whisper: "float16", "int8_float16", "int8"
+            use_vad (bool): Use Voice Activity Detection to filter silence
         """
         self.model_name = model_name
         self.chunk_duration = chunk_duration
         self.overlap_duration = overlap_duration
+        self.whisper_implementation = whisper_implementation
+        self.compute_type = compute_type
+        self.use_vad = use_vad
         
         # Audio settings
         self.sample_rate = 16000  # Whisper expects 16kHz
@@ -144,7 +172,7 @@ class StreamlitLiveTranscriber:
             return "cpu"
     
     def load_model(self, device_preference=None):
-        """Load the Whisper model."""
+        """Load the Whisper model based on the selected implementation."""
         if self.model_loaded:
             return True
             
@@ -152,35 +180,101 @@ class StreamlitLiveTranscriber:
             # Determine device to use
             self.device = self._determine_device(device_preference)
             
-            # Load Whisper model
-            with st.spinner(f"Loading Whisper {self.model_name} model..."):
-                self.model = whisper.load_model(self.model_name, device=self.device)
+            # Load model based on implementation
+            if self.whisper_implementation == "faster-whisper":
+                return self._load_faster_whisper_model()
+            else:
+                return self._load_openai_whisper_model()
+                
+        except Exception as e:
+            st.error(f"❌ Error loading model: {e}")
+            return False
+    
+    def _load_faster_whisper_model(self):
+        """Load Faster-Whisper model."""
+        try:
+            with st.spinner(f"Loading Faster-Whisper {self.model_name} model..."):
+                # Determine compute type based on device
+                if self.device == "cuda":
+                    compute_type = self.compute_type
+                else:
+                    compute_type = "int8" if self.compute_type in ["int8_float16", "int8"] else "float32"
+                
+                self.model = WhisperModel(
+                    self.model_name, 
+                    device=self.device, 
+                    compute_type=compute_type
+                )
                 
             # Pre-warm the model
-            with st.spinner("Pre-warming model..."):
+            with st.spinner("Pre-warming Faster-Whisper model..."):
                 dummy_audio = np.zeros(self.sample_rate * 2, dtype=np.float32)
-                _ = self.model.transcribe(dummy_audio, language="en", fp16=self.device=="cuda")
+                segments, _ = self.model.transcribe(
+                    dummy_audio, 
+                    language="en",
+                    vad_filter=False
+                )
+                # Consume the generator to actually run transcription
+                list(segments)
                 
             self.model_loaded = True
-            self.status_message = f"✅ Model loaded successfully on {self.device.upper()}!"
+            self.status_message = f"✅ Faster-Whisper model loaded successfully on {self.device.upper()}! (Compute: {self.compute_type})"
             return True
             
         except Exception as e:
             if self.device == "cuda":
-                st.warning("🔄 CUDA failed, falling back to CPU...")
+                st.warning("🔄 CUDA failed with Faster-Whisper, falling back to CPU...")
                 try:
                     self.device = "cpu"
-                    self.model = whisper.load_model(self.model_name, device=self.device)
+                    compute_type = "int8" if self.compute_type in ["int8_float16", "int8"] else "float32"
+                    self.model = WhisperModel(self.model_name, device=self.device, compute_type=compute_type)
+                    
+                    # Pre-warm
+                    dummy_audio = np.zeros(self.sample_rate * 2, dtype=np.float32)
+                    segments, _ = self.model.transcribe(dummy_audio, language="en", vad_filter=False)
+                    list(segments)
+                    
+                    self.model_loaded = True
+                    self.status_message = f"✅ Faster-Whisper model loaded successfully on CPU! (Compute: {compute_type})"
+                    return True
+                except Exception as cpu_e:
+                    st.error(f"❌ Error loading Faster-Whisper on CPU: {cpu_e}")
+                    return False
+            else:
+                st.error(f"❌ Error loading Faster-Whisper: {e}")
+                return False
+    
+    def _load_openai_whisper_model(self):
+        """Load OpenAI Whisper model."""
+        try:
+            with st.spinner(f"Loading OpenAI Whisper {self.model_name} model..."):
+                self.model = openai_whisper.load_model(self.model_name, device=self.device)
+                
+            # Pre-warm the model
+            with st.spinner("Pre-warming OpenAI Whisper model..."):
+                dummy_audio = np.zeros(self.sample_rate * 2, dtype=np.float32)
+                _ = self.model.transcribe(dummy_audio, language="en", fp16=self.device=="cuda")
+                
+            self.model_loaded = True
+            self.status_message = f"✅ OpenAI Whisper model loaded successfully on {self.device.upper()}!"
+            return True
+            
+        except Exception as e:
+            if self.device == "cuda":
+                st.warning("🔄 CUDA failed with OpenAI Whisper, falling back to CPU...")
+                try:
+                    self.device = "cpu"
+                    self.model = openai_whisper.load_model(self.model_name, device=self.device)
                     dummy_audio = np.zeros(self.sample_rate * 2, dtype=np.float32)
                     _ = self.model.transcribe(dummy_audio, language="en", fp16=False)
                     self.model_loaded = True
-                    self.status_message = "✅ Model loaded successfully on CPU!"
+                    self.status_message = "✅ OpenAI Whisper model loaded successfully on CPU!"
                     return True
                 except Exception as cpu_e:
-                    st.error(f"❌ Error loading model: {cpu_e}")
+                    st.error(f"❌ Error loading OpenAI Whisper on CPU: {cpu_e}")
                     return False
             else:
-                st.error(f"❌ Error loading model: {e}")
+                st.error(f"❌ Error loading OpenAI Whisper: {e}")
                 return False
     
     def get_audio_devices(self):
@@ -258,6 +352,33 @@ class StreamlitLiveTranscriber:
                 if self.running:
                     st.error(f"Error in audio processor: {e}")
     
+    def _transcribe_faster_whisper(self, audio_chunk):
+        """Transcribe using Faster-Whisper implementation."""
+        segments, info = self.model.transcribe(
+            audio_chunk,
+            language="en",
+            vad_filter=self.use_vad,
+            beam_size=5
+        )
+        
+        # Collect all segments
+        text_segments = []
+        for segment in segments:
+            text_segments.append(segment.text.strip())
+        
+        return " ".join(text_segments), info.language_probability if hasattr(info, 'language_probability') else 0.0
+    
+    def _transcribe_openai_whisper(self, audio_chunk):
+        """Transcribe using OpenAI Whisper implementation."""
+        result = self.model.transcribe(
+            audio_chunk,
+            language="en",
+            fp16=self.device=="cuda",
+            verbose=False
+        )
+        
+        return result["text"].strip(), result.get("language_probability", 0.0)
+    
     def transcription_processor(self):
         """Process audio chunks and transcribe them."""
         while self.running:
@@ -269,19 +390,19 @@ class StreamlitLiveTranscriber:
                 if np.max(np.abs(audio_chunk)) > 0:
                     audio_chunk = audio_chunk / np.max(np.abs(audio_chunk))
                 
-                # Transcribe
+                # Transcribe based on implementation
                 start_time = time.time()
-                result = self.model.transcribe(
-                    audio_chunk,
-                    language="en",
-                    fp16=self.device=="cuda",
-                    verbose=False
-                )
+                
+                if self.whisper_implementation == "faster-whisper":
+                    text, confidence = self._transcribe_faster_whisper(audio_chunk)
+                else:
+                    text, confidence = self._transcribe_openai_whisper(audio_chunk)
+                
                 transcription_time = time.time() - start_time
                 
-                text = result["text"].strip()
                 if text:
                     device_emoji = "🚀" if self.device == "cuda" else "🖥️"
+                    impl_emoji = "⚡" if self.whisper_implementation == "faster-whisper" else "🤖"
                     timestamp = time.strftime("%H:%M:%S")
                     
                     # Add to transcriptions list
@@ -289,7 +410,9 @@ class StreamlitLiveTranscriber:
                         'timestamp': timestamp,
                         'text': text,
                         'processing_time': transcription_time,
-                        'device': device_emoji
+                        'device': device_emoji,
+                        'implementation': impl_emoji,
+                        'confidence': confidence
                     })
                     
             except queue.Empty:
@@ -333,7 +456,8 @@ class StreamlitLiveTranscriber:
             # Start audio stream
             self.stream.start_stream()
             
-            self.status_message = "🎤 Transcription system started - Ready to listen!"
+            impl_name = "Faster-Whisper" if self.whisper_implementation == "faster-whisper" else "OpenAI Whisper"
+            self.status_message = f"🎤 {impl_name} transcription system started - Ready to listen!"
             return True
             
         except Exception as e:
@@ -398,26 +522,73 @@ def main():
     """Main Streamlit application."""
     
     # Header
-    st.title("🎤 Live Transcription with OpenAI Whisper")
-    st.markdown("Real-time speech recognition with GPU acceleration")
+    st.title("🎤 Live Transcription with Whisper")
+    st.markdown("Real-time speech recognition with GPU acceleration - **OpenAI Whisper** vs **Faster-Whisper**")
+    
+    # Check availability of implementations
+    availability_cols = st.columns(2)
+    with availability_cols[0]:
+        if OPENAI_WHISPER_AVAILABLE:
+            st.success("✅ OpenAI Whisper Available")
+        else:
+            st.error("❌ OpenAI Whisper Not Available")
+    
+    with availability_cols[1]:
+        if FASTER_WHISPER_AVAILABLE:
+            st.success("✅ Faster-Whisper Available")
+        else:
+            st.error("❌ Faster-Whisper Not Available")
     
     # Sidebar for settings
     with st.sidebar:
         st.header("⚙️ Settings")
         
-        # Model selection
-        model_options = ["tiny", "base", "small", "medium", "large", "turbo"]
+        # Implementation selection
+        available_implementations = []
+        if FASTER_WHISPER_AVAILABLE:
+            available_implementations.append("faster-whisper")
+        if OPENAI_WHISPER_AVAILABLE:
+            available_implementations.append("openai-whisper")
+        
+        if not available_implementations:
+            st.error("❌ No Whisper implementations available! Please install whisper or faster-whisper.")
+            return
+        
+        selected_implementation = st.selectbox(
+            "🚀 Whisper Implementation",
+            available_implementations,
+            index=0,
+            format_func=lambda x: {
+                "faster-whisper": "⚡ Faster-Whisper (Recommended - Up to 4x faster)",
+                "openai-whisper": "🤖 OpenAI Whisper (Original)"
+            }[x],
+            help="""
+            **Faster-Whisper**: CTranslate2 implementation, up to 4x faster with lower memory usage
+            **OpenAI Whisper**: Original implementation from OpenAI
+            """
+        )
+        
+        # Model selection (with different options for faster-whisper)
+        if selected_implementation == "faster-whisper":
+            model_options = ["tiny", "base", "small", "medium", "large", "large-v2", "large-v3", "turbo", "distil-large-v3"]
+            default_model = "small"
+        else:
+            model_options = ["tiny", "base", "small", "medium", "large"]
+            default_model = "small"
+        
         selected_model = st.selectbox(
             "🤖 Whisper Model",
             model_options,
-            index=2,  # Default to "small"
+            index=model_options.index(default_model),
             help="""
-            - tiny: Fastest, least accurate
-            - base: Good balance
-            - small: Good quality (recommended)
-            - medium: Higher quality (good for RTX 4050)
-            - large: Best quality
-            - turbo: Optimized balance
+            **tiny**: Fastest, least accurate (~39 MB)
+            **base**: Good balance (~74 MB)
+            **small**: Good quality (~244 MB, recommended)
+            **medium**: Higher quality (~769 MB)
+            **large**: Best quality (~1550 MB)
+            **large-v3**: Latest large model (faster-whisper only)
+            **turbo**: Optimized balance (faster-whisper only)
+            **distil-large-v3**: Distilled model, faster inference (faster-whisper only)
             """
         )
         
@@ -426,13 +597,39 @@ def main():
         selected_device = st.selectbox(
             "🎯 Processing Device",
             device_options,
-            index=0,  # Default to "auto"
+            index=0,
             help="""
-            - auto: Automatically detect best device
-            - cuda: Force GPU usage
-            - cpu: Force CPU usage
+            **auto**: Automatically detect best device
+            **cuda**: Force GPU usage (if available)
+            **cpu**: Force CPU usage
             """
         )
+        
+        # Faster-Whisper specific settings
+        if selected_implementation == "faster-whisper":
+            st.subheader("⚡ Faster-Whisper Settings")
+            
+            compute_type_options = ["float16", "int8_float16", "int8", "float32"]
+            compute_type = st.selectbox(
+                "🔢 Compute Type",
+                compute_type_options,
+                index=0,
+                help="""
+                **float16**: Best quality, GPU recommended
+                **int8_float16**: Good balance, GPU + CPU
+                **int8**: Fastest, lower memory usage
+                **float32**: Highest precision, CPU fallback
+                """
+            )
+            
+            use_vad = st.checkbox(
+                "🔊 Voice Activity Detection (VAD)",
+                value=True,
+                help="Filter out silence automatically using Silero VAD"
+            )
+        else:
+            compute_type = "float16"
+            use_vad = False
         
         # Audio settings
         st.subheader("🎧 Audio Settings")
@@ -451,7 +648,10 @@ def main():
                 model_name=selected_model,
                 chunk_duration=chunk_duration,
                 overlap_duration=overlap_duration,
-                device=device_pref
+                device=device_pref,
+                whisper_implementation=selected_implementation,
+                compute_type=compute_type,
+                use_vad=use_vad
             )
             
             if st.session_state.transcriber.load_model(device_pref):
@@ -464,10 +664,31 @@ def main():
     # Main content area
     if st.session_state.transcriber and st.session_state.transcriber.model_loaded:
         
+        # Implementation info banner
+        impl_name = "Faster-Whisper" if st.session_state.transcriber.whisper_implementation == "faster-whisper" else "OpenAI Whisper"
+        impl_emoji = "⚡" if st.session_state.transcriber.whisper_implementation == "faster-whisper" else "🤖"
+        
+        st.info(f"{impl_emoji} **Using {impl_name}** with model **{selected_model}** on **{st.session_state.transcriber.device.upper() if st.session_state.transcriber.device else 'Unknown'}**")
+        
         # Device info
         with st.expander("📊 System Information", expanded=False):
             if st.session_state.transcriber.device_info:
                 st.text(st.session_state.transcriber.device_info)
+            
+            # Implementation details
+            st.subheader("🔧 Configuration Details")
+            config_data = {
+                "Implementation": impl_name,
+                "Model": selected_model,
+                "Device": st.session_state.transcriber.device.upper() if st.session_state.transcriber.device else "Unknown",
+                "Compute Type": compute_type if selected_implementation == "faster-whisper" else "float16/float32",
+                "VAD Enabled": use_vad if selected_implementation == "faster-whisper" else "N/A",
+                "Chunk Duration": f"{chunk_duration}s",
+                "Overlap Duration": f"{overlap_duration}s"
+            }
+            
+            for key, value in config_data.items():
+                st.text(f"{key}: {value}")
             
             # Audio devices
             st.subheader("🎤 Available Audio Devices")
@@ -546,6 +767,10 @@ def main():
         if st.session_state.transcriber:
             st.info(f"**Status:** {st.session_state.transcriber.status_message}")
         
+        # Performance comparison info
+        if selected_implementation == "faster-whisper":
+            st.success("⚡ **Performance Boost**: Faster-Whisper is up to 4x faster than OpenAI Whisper with lower memory usage!")
+        
         # Keyboard shortcut info
         st.markdown("""
         ### ⌨️ Keyboard Shortcuts
@@ -596,8 +821,10 @@ def main():
                     with st.container():
                         col1, col2 = st.columns([1, 6])
                         with col1:
-                            st.text(f"{trans['device']} {trans['timestamp']}")
+                            st.text(f"{trans['device']}{trans['implementation']} {trans['timestamp']}")
                             st.caption(f"{trans['processing_time']:.2f}s")
+                            if 'confidence' in trans and trans['confidence'] > 0:
+                                st.caption(f"Conf: {trans['confidence']:.2f}")
                         with col2:
                             st.markdown(f"**{trans['text']}**")
                         
@@ -616,13 +843,21 @@ def main():
         st.warning("Please initialize the system using the sidebar settings.")
         st.markdown("""
         ### 🚀 Getting Started
-        1. Choose your preferred Whisper model in the sidebar
-        2. Select processing device (GPU recommended)
-        3. Click "Initialize System"
-        4. Start the system and begin listening!
+        1. Choose between **Faster-Whisper** (recommended) or **OpenAI Whisper**
+        2. Select your preferred Whisper model in the sidebar
+        3. Configure processing device (GPU recommended)
+        4. Click "Initialize System"
+        5. Start the system and begin listening!
+        
+        ### ⚡ Why Faster-Whisper?
+        - **Up to 4x faster** than OpenAI Whisper
+        - **Lower memory usage** - great for RTX 4050
+        - **8-bit quantization** support for even better performance
+        - **Voice Activity Detection** built-in
+        - **Same accuracy** as original Whisper
         """)
 
-     # Author section
+    # Author section
     st.markdown("---")
     st.subheader("👨‍💻 About the Creator")
     st.markdown("""
@@ -635,8 +870,9 @@ def main():
     - [Website](https://geethikaisuru.com)
     
     📄 **License:** MIT License \n
-    ⚠️ **Note:** The underlying Whisper Model is made by OpenAI and is open source with MIT License. I only made the frontend to easily use that model.
-    - [OpenAI Whisper](https://github.com/openai/whisper)         
+    ⚠️ **Note:** The underlying Whisper Models are made by OpenAI and are open source with MIT License. Faster-Whisper is by SYSTRAN. I only made the frontend to easily use these models.
+    - [OpenAI Whisper](https://github.com/openai/whisper)
+    - [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper)         
     """)
         
     # GitHub star button
